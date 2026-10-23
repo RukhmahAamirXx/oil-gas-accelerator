@@ -7,6 +7,27 @@ A real-time anomaly detection system for 12 offshore wellheads. Sensor readings 
 
 ---
 
+## Architecture
+
+Diagram source: [`docs/oilgas_architecture.drawio`](docs/oilgas_architecture.drawio) — open it in [diagrams.net](https://app.diagrams.net) (File → Open from → Device) or the VS Code Draw.io extension.
+
+```
+Wellhead sensors → MQTT (Mosquitto)
+  → Ingestion pipeline: Header Enricher → Data Quality Tagger → quality_score?
+       ├─ bad (0.0)   → Dead-Letter Queue (MinIO kermit-error-dlq)
+       └─ clean (1.0) → Kafka sensors.normalised
+                            ├─ archive → MongoDB raw_sensor_events
+                            └─ Anomaly Detection pipeline: classifier (thresholds.yaml) → severity?
+                                 ├─ NORMAL            → discarded
+                                 ├─ WARN + CRITICAL   → Postgres anomaly_events
+                                 └─ CRITICAL only     → Maintenance API (opens case)
+Postgres → Blowout Watchdog (3+ CRITICAL / 10 min / well) → Mailhog email
+Postgres → Shift Report Generator → Excel → MinIO kermit-shift-reports + email
+Postgres → Grafana, Ops Console
+```
+
+---
+
 ## What's in the box
 
 ```
@@ -37,6 +58,7 @@ oil-gas-acceleratorX/
 │   └── ops_console.html             # unified operator UI
 ├── grafana/
 │   └── provisioning/                # datasource + dashboard provisioning
+├── docs/oilgas_architecture.drawio  # architecture diagram (diagrams.net)
 ├── DEMO_RUNBOOK.md                  # 11-stage demo script
 ├── DEMO_COMMANDS_ONLY.md            # demo commands, no commentary
 ├── start_demo.sh / stop_demo.sh     # one-command demo start/stop
