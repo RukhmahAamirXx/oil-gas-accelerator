@@ -1,0 +1,38 @@
+field_name_by_well:
+  WELL-01: Field-North
+  WELL-02: Field-North
+  WELL-03: Field-North
+  WELL-04: Field-South
+  WELL-05: Field-South
+  WELL-06: Field-South
+  WELL-07: Field-South
+  WELL-08: Field-East
+  WELL-09: Field-East
+  WELL-10: Field-East
+  WELL-11: Field-West
+  WELL-12: Field-West
+  WELL-13: Field-West
+  WELL-14: Field-West
+metrics:
+- pressure_bar
+- temp_celsius
+- flow_rate_m3h
+- vibration_g
+- valve_status
+topic_pattern: sensors/wellhead/{well}/{metric}
+topic_wildcard: sensors/wellhead/+/+
+wellheads:
+- WELL-01
+- WELL-02
+- WELL-03
+- WELL-04
+- WELL-05
+- WELL-06
+- WELL-07
+- WELL-08
+- WELL-09
+- WELL-10
+- WELL-11
+- WELL-12
+- WELL-13
+- WELL-14

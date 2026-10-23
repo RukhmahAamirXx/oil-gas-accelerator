@@ -1,0 +1,41 @@
+# =====================================================================
+# KSEA Oil & Gas Accelerator — Python dependencies
+# Python 3.9+
+#
+# Install:  pip install -r requirements.txt
+# =====================================================================
+
+# ---------- StreamSets SDK ----------
+# Core SDK used by all pipeline/fragment build scripts and the watchdog
+# (for job control). 6.6.x is what this project was built and tested on.
+streamsets~=6.6
+
+# ---------- MQTT (simulator publishes to Mosquitto) ----------
+paho-mqtt>=1.6,<3.0
+
+# ---------- Kafka client (used by mongo_archiver + anomaly_recorder) ----------
+kafka-python>=2.0,<3.0
+
+# ---------- MongoDB (raw-event archive + reset script) ----------
+pymongo>=4.0,<5.0
+
+# ---------- Postgres (anomaly_events, audit_log, maintenance_cases) ----------
+# psycopg2-binary avoids needing libpq dev headers at install time.
+psycopg2-binary>=2.9,<3.0
+
+# ---------- MinIO via S3 SDK (DLQ + shift reports + reset script) ----------
+boto3>=1.28,<2.0
+botocore>=1.31,<2.0
+
+# ---------- Excel reports (shift_report_generator) ----------
+openpyxl>=3.1,<4.0
+
+# ---------- HTTP (maintenance API calls outside StreamSets) ----------
+requests>=2.31,<3.0
+
+# ---------- Config files (thresholds.yaml, wellheads.yaml, sch_config.yaml) ----------
+PyYAML>=6.0,<7.0
+
+# ---------- Ops Console: read-only Flask API ----------
+Flask>=3.0,<4.0
+Flask-Cors>=4.0,<6.0

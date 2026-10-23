@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Prometheus scraping itself
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Maintenance API (expose /metrics in the FastAPI app to light this up)
+  - job_name: maintenance-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["maintenance-api:8000"]
+
+  # Add a pushgateway or instrument your SDK scripts here later to surface
+  # anomalies-per-well, MQTT message rate, etc. into Grafana.

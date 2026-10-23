@@ -1,0 +1,292 @@
+# =============================================================================
+# Kermit StreamSets Engineering Accelerator - Oil & Gas Use Case
+# Full local environment: brings up every service with `docker compose up -d`
+#
+# Services:
+#   mosquitto    - MQTT broker (wellhead telemetry ingress)
+#   zookeeper    - Kafka coordination
+#   kafka        - event streaming backbone (sensors.normalised, sensors.anomalies)
+#   postgres     - relational store (sensor_readings, anomaly_events, etc.)
+#   mongodb      - raw sensor event archive
+#   maintenance-api - FastAPI maintenance case service (POST /cases)
+#   minio        - S3-compatible object storage (reports, archive, DLQ)
+#   mailhog      - captures shift-report emails
+#   prometheus   - metrics scraping
+#   grafana      - operational dashboard
+#
+# Health checks ensure dependent services wait for their dependencies.
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # MQTT broker - 12 wellheads publish telemetry here
+  # ---------------------------------------------------------------------------
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: oilgas-mosquitto
+    ports:
+      - "1883:1883"      # MQTT
+      - "9001:9001"      # MQTT over websockets (optional)
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    healthcheck:
+      # publish a probe message; succeeds only if the broker accepts connections
+      test: ["CMD-SHELL", "mosquitto_pub -h localhost -t healthcheck -m ping -q 1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [oilgas]
+
+  # ---------------------------------------------------------------------------
+  # Zookeeper - required by this Kafka image
+  # ---------------------------------------------------------------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: oilgas-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      # The Confluent image may not ship `nc`, so probe via the bundled
+      # zookeeper-shell instead - it connects and lists the root znode.
+      test: ["CMD-SHELL", "zookeeper-shell localhost:2181 ls / >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [oilgas]
+
+  # ---------------------------------------------------------------------------
+  # Kafka - dual listeners so BOTH in-network containers (StreamSets) and
+  # host processes (your simulator / SDK scripts) can connect.
+  #   INTERNAL (kafka:29092)  -> other containers on the oilgas network
+  #   EXTERNAL (localhost:9092) -> processes on your Mac
+  # This dual-listener setup is the #1 thing that prevents Kafka networking pain.
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: oilgas-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks: [oilgas]
+
+  # ---------------------------------------------------------------------------
+  # Kafka topic bootstrap - creates the two required topics with the retention
+  # the brief specifies, then exits. Runs once after Kafka is healthy.
+  # ---------------------------------------------------------------------------
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: oilgas-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
+        --topic sensors.normalised --partitions 3 --replication-factor 1 \
+        --config retention.ms=604800000 &&
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
+        --topic sensors.anomalies --partitions 3 --replication-factor 1 \
+        --config retention.ms=-1 &&
+      echo 'Topics created:' &&
+      kafka-topics --bootstrap-server kafka:29092 --list
+      "
+    networks: [oilgas]
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL - primary relational store. Schema auto-loaded on first boot.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15
+    container_name: oilgas-postgres
+    environment:
+      POSTGRES_USER: kermit
+      POSTGRES_PASSWORD: kermit
+      POSTGRES_DB: oilgas
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kermit -d oilgas"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [oilgas]
+
+  # ---------------------------------------------------------------------------
+  # MongoDB - raw sensor event archive (secondary write, pipeline tolerates
+  # it being slow/down).
+  # ---------------------------------------------------------------------------
+  mongodb:
+    image: mongo:7.0
+    container_name: oilgas-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: kermit
+      MONGO_INITDB_ROOT_PASSWORD: kermit
+      MONGO_INITDB_DATABASE: oilgas
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.adminCommand(\"ping\")' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks: [oilgas]
+
+  # ---------------------------------------------------------------------------
+  # FastAPI maintenance API - POST /cases returns case_id + assigned_team.
+  # Built from ./api (Dockerfile + app). Simulated ~200ms response.
+  # ---------------------------------------------------------------------------
+  maintenance-api:
+    build: ./api
+    container_name: oilgas-maintenance-api
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: kermit
+      DB_PASSWORD: kermit
+      DB_NAME: oilgas
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks: [oilgas]
+
+  # ---------------------------------------------------------------------------
+  # MinIO - S3-compatible storage, now serving HTTPS/TLS.
+  # TLS fixes the AWS SDK v2 'x-amz-content-sha256' error, which only rejects
+  # PLAIN-HTTP S3 endpoints. MinIO auto-enables HTTPS when it finds certs at
+  # /root/.minio/certs/{public.crt,private.key}.
+  # Buckets created by minio-init.
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: oilgas-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"      # S3 API (HTTPS)
+      - "9090:9001"      # web console (HTTPS; mapped to 9090 to avoid mosquitto ws)
+    environment:
+      MINIO_ROOT_USER: kermit
+      MINIO_ROOT_PASSWORD: kermit123
+    volumes:
+      - minio_data:/data
+      - ./certs/public.crt:/root/.minio/certs/public.crt:ro
+      - ./certs/private.key:/root/.minio/certs/private.key:ro
+    healthcheck:
+      # -k: accept the self-signed cert
+      test: ["CMD-SHELL", "curl -fk https://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks: [oilgas]
+
+  minio-init:
+    image: minio/mc
+    container_name: oilgas-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "
+      mc alias set local https://minio:9000 kermit kermit123 --insecure &&
+      mc mb -p local/kermit-shift-reports --insecure &&
+      mc mb -p local/kermit-sensor-archive --insecure &&
+      mc mb -p local/kermit-error-dlq --insecure &&
+      echo 'Buckets created:' && mc ls local --insecure
+      "
+    networks: [oilgas]
+
+  # ---------------------------------------------------------------------------
+  # Mailhog - captures shift-report emails. UI on :8025, SMTP on :1025.
+  # ---------------------------------------------------------------------------
+  mailhog:
+    image: mailhog/mailhog
+    container_name: oilgas-mailhog
+    ports:
+      - "1025:1025"      # SMTP
+      - "8025:8025"      # web UI
+    networks: [oilgas]
+
+  # ---------------------------------------------------------------------------
+  # Prometheus - scrapes metrics (config in ./prometheus/prometheus.yml)
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus
+    container_name: oilgas-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks: [oilgas]
+
+  # ---------------------------------------------------------------------------
+  # Grafana - operational dashboard. Prometheus pre-wired as datasource.
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana
+    container_name: oilgas-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    depends_on:
+      - prometheus
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    networks: [oilgas]
+
+networks:
+  oilgas:
+    driver: bridge
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:
+  postgres_data:
+  mongo_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:

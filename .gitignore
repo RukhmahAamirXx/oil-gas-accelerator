@@ -1,0 +1,39 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.venv-test/
+*.egg
+
+# --- Credentials & secrets (CRITICAL - never commit these) ---
+sch_config.yaml
+**/sch_config.yaml
+.env
+.env.local
+*.pem
+*.key
+
+# --- State files (runtime data, per-machine) ---
+scripts/watchdog_state.json
+scripts/*.pyc
+
+# --- Logs ---
+*.log
+oilgas-demo-logs/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# --- Local outputs / test artifacts ---
+_archive_diagnostics/
+*_backup.py
+*.bak
+
+# --- Stray/system files ---
+scripts/.@
+*.MOV

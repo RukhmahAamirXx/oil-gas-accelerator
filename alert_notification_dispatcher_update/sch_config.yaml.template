@@ -1,0 +1,28 @@
+# =============================================================================
+# StreamSets Control Hub connection config (template).
+#
+# Setup:
+#   1. cp fragments/sch_config.yaml.template fragments/sch_config.yaml
+#   2. Fill in the values below.
+#   3. NEVER commit sch_config.yaml (it is gitignored).
+#
+# Create credentials at: <your Control Hub URL> -> Manage -> API Credentials -> + New
+# Credentials expire. If you get "Token passed is not valid", make a new one.
+# =============================================================================
+
+control_hub:
+  url: "https://eu02.hub.streamsets.com"
+  credential_id: "YOUR_CREDENTIAL_ID_HERE"
+  credential_token: "YOUR_CREDENTIAL_TOKEN_HERE"
+
+engine:
+  # The data_collector engine that pipelines and fragments are built against.
+  engine_type: "data_collector"
+  engine_id: "YOUR_ENGINE_ID_HERE"
+
+publish:
+  workspace: "kermit-accelerator-dev"
+  labels:
+    - "industry:oil_gas"
+    - "env:dev"
+    - "accelerator:ksea"

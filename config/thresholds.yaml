@@ -1,0 +1,76 @@
+# =============================================================================
+# Anomaly Thresholds - Oil & Gas Wellhead Monitoring
+# Single source of truth for WARN / CRITICAL classification.
+#
+# Consumed by:
+#   - the Anomaly Detection pipeline (Day 6) - classifies each reading
+#   - anomaly_watchdog.py (Day 8)            - blowout-pattern detection
+#   - wellhead_simulator.py                  - injects breaches at these bands
+#
+# Values are taken verbatim from the use-case brief, Section 2.2. Do NOT
+# hardcode these numbers anywhere else - read them from this file so the
+# pipeline, the watchdog, and the simulator can never drift apart.
+#
+# Classification model (numeric metrics):
+#   NORMAL    : normal.low  <= value <= normal.high
+#   WARN      : value < warn.low      OR value > warn.high
+#   CRITICAL  : value < critical.low  OR value > critical.high
+# CRITICAL is checked first; a reading that breaches critical is CRITICAL,
+# not WARN. A null/missing value on a required metric is treated as CRITICAL
+# (data-quality failure) and routed to the dead-letter queue.
+# =============================================================================
+
+version: "1.0"
+
+metrics:
+
+  pressure_bar:
+    unit: "bar"
+    type: numeric
+    normal:   { low: 150, high: 280 }
+    warn:     { low: 140, high: 290 }
+    critical: { low: 120, high: 310 }
+
+  temp_celsius:
+    unit: "C"
+    type: numeric
+    normal:   { low: 60, high: 90 }
+    warn:     { low: 55, high: 95 }
+    critical: { low: 45, high: 105 }
+
+  flow_rate_m3h:
+    unit: "m3/h"
+    type: numeric
+    normal:   { low: 800, high: 1200 }
+    warn:     { low: 750, high: 1250 }
+    critical: { low: 600, high: 1400 }
+
+  vibration_g:
+    unit: "G"
+    type: numeric
+    # High-side only - vibration has no meaningful low breach (0 is fine).
+    # low values are set well below 0 so the low check never fires.
+    normal:   { low: 0, high: 2.5 }
+    warn:     { low: -1, high: 3.0 }
+    critical: { low: -1, high: 4.5 }
+
+  valve_status:
+    type: categorical
+    # Categorical metric - classified by membership, not by range.
+    normal:   ["OPEN", "CLOSED"]
+    warn:     ["PARTIAL"]     # unexpected partial open
+    critical: ["FAULT"]
+
+# -----------------------------------------------------------------------------
+# Alerting rules (brief Section 2.1 step 8 + compliance table).
+# Used by alert_notification_dispatcher and anomaly_watchdog.py.
+# -----------------------------------------------------------------------------
+alerting:
+  warn_on: single_breach            # one threshold breach -> WARN
+  critical_pattern:
+    breaches: 3                     # 3+ CRITICAL breaches...
+    window_minutes: 10              # ...within 10 minutes...
+    scope: same_well                # ...on the same well = blowout indicator
+  critical_triggers_case: true      # CRITICAL must POST to the maintenance API
+  case_api_retries: 3               # 3 retries...
+  case_api_backoff: exponential     # ...with exponential backoff before alerting
