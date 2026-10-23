@@ -1,0 +1,18 @@
+apiVersion: 1
+
+datasources:
+  - name: OilGas Postgres
+    uid: oilgas-postgres
+    type: postgres
+    access: proxy
+    # internal container address - Postgres listens on 5432 inside the docker network
+    url: postgres:5432
+    user: kermit
+    jsonData:
+      database: oilgas
+      sslmode: disable
+      postgresVersion: 1500
+      timescaledb: false
+    secureJsonData:
+      password: kermit    # demo credential, matches docker-compose.yml
+    editable: true

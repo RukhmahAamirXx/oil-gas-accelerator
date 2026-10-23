@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: oilgas
+    orgId: 1
+    folder: Oil & Gas
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

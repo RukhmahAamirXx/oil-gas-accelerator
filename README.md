@@ -57,7 +57,9 @@ oil-gas-acceleratorX/
 │   ├── ops_dashboard_api.py         # read-only Flask API on :8050
 │   └── ops_console.html             # unified operator UI
 ├── grafana/
-│   └── provisioning/                # datasource + dashboard provisioning
+│   └── provisioning/
+│       ├── datasources/             # Prometheus + Postgres datasources
+│       └── dashboards/              # dashboard provider + oilgas_operations.json
 ├── docs/oilgas_architecture.drawio  # architecture diagram (diagrams.net)
 ├── DEMO_RUNBOOK.md                  # 11-stage demo script
 ├── DEMO_COMMANDS_ONLY.md            # demo commands, no commentary
@@ -285,8 +287,8 @@ Blowout pattern: 3 or more CRITICAL events on one well within 10 minutes.
 
 ## Monitoring
 
-**Grafana** — http://localhost:3001
-Four operational panels (anomalies per well per hour, CRITICAL count 24h, cases opened today, anomaly event rate).
+**Grafana** — http://localhost:3001 (login `admin` / `admin`, demo default)
+The "Oil & Gas Operations" dashboard (folder *Oil & Gas*) is provisioned automatically on `docker compose up`. It reads from Postgres and has four panels: anomalies per well per hour, CRITICAL count (24h), maintenance cases opened today, and anomaly event rate. It refreshes every 10 seconds and shows data once the simulator and pipelines are running.
 
 **Ops Console** — `ops_console/ops_console.html` (with the API running):
 ```bash
